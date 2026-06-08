@@ -1,0 +1,112 @@
+--
+BigQuery dataset link:
+https://console.cloud.google.com/bigquery?ws=!1m10!1m4!3m2!1sdata-analytics-469406!2scourse14!23sWS_URL_PARAM!1m4!3m2!1sflash-audio-486218-h6!2schurn_project!23sTREE_NODE_SELECTION&authuser=1&project=flash-audio-486218-h6&supportedpurview=project
+
+Burada yapılan adımlar ve oluşturulan tablolar:
+--`flash-audio-486218-h6.churn_project.customer_churn_data`
+--`flash-audio-486218-h6.churn_project.customer_churn_data_clean`
+--`flash-audio-486218-h6.churn_project.customer_churn_data_segments`
+--`flash-audio-486218-h6.churn_project.customer_churn_data_kpi`
+
+--Genel inceleme
+SELECT * FROM `flash-audio-486218-h6.churn_project.customer_churn_data` LIMIT 1000;
+
+--Data formatlarını ve kolon adlarını düzenleme
+CREATE OR REPLACE TABLE `flash-audio-486218-h6.churn_project.customer_churn_data_clean` AS
+SELECT
+  CAST(customer_id      AS STRING)  AS customer_id,
+  CAST(credit_score     AS INT64)   AS credit_score,
+  TRIM(country)              AS country,
+  TRIM(gender)               AS gender,
+  CAST(age              AS INT64)   AS age,
+  CAST(tenure           AS INT64)   AS tenure,
+  CAST(balance          AS FLOAT64) AS balance,
+  CAST(products_number  AS INT64)   AS products_number,
+  CAST(credit_card      AS BOOL)    AS has_credit_card,
+  CAST(active_member    AS BOOL)    AS is_active_member,
+  CAST(estimated_salary AS FLOAT64) AS estimated_salary,
+  CAST(churn            AS BOOL)    AS is_churned
+FROM `flash-audio-486218-h6.churn_project.customer_churn_data`
+WHERE customer_id IS NOT NULL;
+
+--Segmentleri oluştur
+CREATE OR REPLACE TABLE `flash-audio-486218-h6.churn_project.customer_churn_data_segments` AS
+SELECT
+  *,
+  -- Yaş segmenti
+  CASE
+    WHEN age < 30 THEN 'young'
+    WHEN age BETWEEN 30 AND 45 THEN 'middle'
+    WHEN age BETWEEN 46 AND 60 THEN 'senior'
+    ELSE 'elderly'
+  END AS age_group,
+  -- Bankadaki kıdem segmenti
+  CASE
+    WHEN tenure BETWEEN 0 AND 2  THEN 'new'
+    WHEN tenure BETWEEN 3 AND 6  THEN 'mid'
+    ELSE 'loyal'
+  END AS tenure_group,
+  -- Bakiye segmenti
+  CASE
+    WHEN balance = 0              THEN 'zero_balance'
+    WHEN balance < 50000          THEN 'low'
+    WHEN balance BETWEEN 50000 AND 100000 THEN 'medium'
+    ELSE 'high'
+  END AS balance_segment,
+  -- Kredi skoru segmenti
+  CASE
+    WHEN credit_score < 580 THEN 'poor'
+    WHEN credit_score BETWEEN 580 AND 669  THEN 'fair'
+    WHEN credit_score BETWEEN 670 AND 739  THEN 'good'
+    WHEN credit_score BETWEEN 740 AND 799  THEN 'very_good'
+    ELSE 'exceptional'
+  END AS credit_score_segment,
+  -- Türetilmiş metrikler
+  SAFE_DIVIDE(balance, estimated_salary)   AS balance_to_salary_ratio,
+  SAFE_DIVIDE(balance, products_number)    AS balance_per_product,
+  SAFE_DIVIDE(credit_score, age)           AS credit_score_per_age,
+  -- Yüksek churn risk flag'i
+  CASE
+    WHEN is_active_member = FALSE
+     AND balance > 0
+    THEN TRUE
+    ELSE FALSE
+  END AS high_churn_risk_flag
+FROM `flash-audio-486218-h6.churn_project.customer_churn_data_clean`;
+
+
+--kpilar oluştur
+CREATE OR REPLACE TABLE `flash-audio-486218-h6.churn_project.customer_churn_data_kpi` AS
+SELECT
+  country,
+  gender,
+  age_group,
+  tenure_group,
+  balance_segment,
+  credit_score_segment,
+  is_active_member,
+  has_credit_card,
+  products_number,
+  high_churn_risk_flag,
+  COUNT(*)                                              AS total_customers,
+  COUNTIF(is_churned = TRUE)                            AS churned_customers,
+  ROUND(COUNTIF(is_churned = TRUE) / COUNT(*) * 100, 2) AS churn_rate_pct,
+  ROUND(AVG(age), 1)              AS avg_age,
+  ROUND(AVG(credit_score), 1)     AS avg_credit_score,
+  ROUND(AVG(balance), 2)          AS avg_balance,
+  ROUND(AVG(estimated_salary), 2) AS avg_estimated_salary,
+  ROUND(AVG(tenure), 1)           AS avg_tenure,
+  ROUND(AVG(balance_to_salary_ratio), 4) AS avg_balance_to_salary_ratio
+FROM `flash-audio-486218-h6.churn_project.customer_churn_data_segments`
+GROUP BY
+  country,
+  gender,
+  age_group,
+  tenure_group,
+  balance_segment,
+  credit_score_segment,
+  is_active_member,
+  has_credit_card,
+  products_number,
+  high_churn_risk_flag;
+--
